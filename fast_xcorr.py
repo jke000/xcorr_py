@@ -153,23 +153,19 @@ class FastXcorr:
         return corrected_spectrum
 
 
-    def calculate_fragment_ion_bins(self, peptide_sequence: str, 
-                                     charge: int = 2, 
+    def calculate_fragment_ion_bins(self, peptide_sequence: str,
+                                     charge: int = 2,
                                      max_mass: float = 4000.0) -> np.ndarray:
         """
         Calculate theoretical spectrum for a peptide sequence.
-        
         Args:
             peptide_sequence: Peptide sequence string
-            charge: Precursor charge state
+            charge: Maximum fragment charge state to consider
             max_mass: Maximum mass to consider
-            
         Returns:
             fragment_ion_bins_uniq: the set of fragment bins
         """
-
         fragment_ion_bins = []
-
         max_bin = int(max_mass / self.bin_width) + 1
         theoretical_spectrum = np.zeros(max_bin)
         
@@ -180,29 +176,31 @@ class FastXcorr:
             aa = peptide_sequence[i]
             if aa in self.amino_acid_masses:
                 cumulative_mass += self.amino_acid_masses[aa]
-                
-                # b-ion mass = cumulative amino acid mass + proton
-                b_ion_mass = cumulative_mass + self.proton_mass
-                bin_idx = int((b_ion_mass / self.bin_width)  + 1 - self.bin_offset)
-                if 0 <= bin_idx < max_bin:
-                    fragment_ion_bins.append(bin_idx)
+                # Calculate b-ions for all charge states from 1 to max charge
+                for fragment_charge in range(1, charge + 1):
+                    # b-ion mass = (cumulative amino acid mass + fragment_charge * proton) / fragment_charge
+                    b_ion_mz = (cumulative_mass + fragment_charge * self.proton_mass) / fragment_charge
+                    bin_idx = int((b_ion_mz / self.bin_width) + 1 - self.bin_offset)
+                    if 0 <= bin_idx < max_bin:
+                        fragment_ion_bins.append(bin_idx)
         
         # Calculate y-ions (C-terminal fragments)
         # y-ions are formed by cleavage at the peptide bond, keeping the C-terminal portion
-        cumulative_mass = self.water_mass + self.proton_mass  # Start with H2O + H+
+        cumulative_mass = self.water_mass  # Start with H2O
         for i in range(len(peptide_sequence) - 1, 0, -1):  # Reverse direction, exclude first amino acid
             aa = peptide_sequence[i]
             if aa in self.amino_acid_masses:
                 cumulative_mass += self.amino_acid_masses[aa]
-                
-                # y-ion mass = cumulative amino acid mass + H2O + H+
-                y_ion_mass = cumulative_mass
-                bin_idx = int((y_ion_mass / self.bin_width)  + 1 - self.bin_offset)
-                if 0 <= bin_idx < max_bin:
-                    fragment_ion_bins.append(bin_idx)
+                # Calculate y-ions for all charge states from 1 to max charge
+                for fragment_charge in range(1, charge + 1):
+                    # y-ion mass = (cumulative amino acid mass + H2O + fragment_charge * proton) / fragment_charge
+                    y_ion_mz = (cumulative_mass + fragment_charge * self.proton_mass) / fragment_charge
+                    bin_idx = int((y_ion_mz / self.bin_width) + 1 - self.bin_offset)
+                    if 0 <= bin_idx < max_bin:
+                        fragment_ion_bins.append(bin_idx)
     
         fragment_ion_bins_uniq = set(fragment_ion_bins)
-        
+
         return fragment_ion_bins_uniq
     
     def calculate_xcorr(self, experimental_spectrum: np.ndarray, 
@@ -261,6 +259,7 @@ class FastXcorr:
 
         
         # Score each peptide
+        charge = 1
         scores = []
         for peptide in peptide_sequences:
             # Calculate theoretical spectrum
@@ -336,13 +335,14 @@ if __name__ == "__main__":
     print("="*60)
     
     target_peptide = "DIGSETK"
+    fragment_charge = 1
     if target_peptide in peptide_sequences:
         # Get the corrected experimental spectrum
-        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, max_mass=4000.0)
+        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, fragment_charge, max_mass=4000.0)
         exp_spectrum_corrected = xcorr_scorer.apply_xcorr_preprocessing(exp_spectrum)
         
         # Calculate theoretical spectrum for DIGSETK
-        fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, charge=2, max_mass=4000.0)
+        fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, fragment_charge, max_mass=4000.0)
         
         print(f"\nAnalyzing peptide: {target_peptide}")
         print(f"Amino acid sequence: D-I-G-S-E-T-K")
