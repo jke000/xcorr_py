@@ -103,32 +103,53 @@ class FastXCorr:
     def apply_xcorr_preprocessing(self, spectrum: np.ndarray) -> np.ndarray:
         """
         Apply the fast xcorr preprocessing as described in equation 6 of the paper.
-        
         Args:
             spectrum: Preprocessed spectrum array
-            
         Returns:
             Spectrum ready for xcorr calculation with correction factor applied
         """
-        # Calculate the correction factor using offsets from -75 to +75 (excluding 0)
         corrected_spectrum = np.zeros_like(spectrum)
         spectrum_length = len(spectrum)
-
-        for i in range(spectrum_length):
-            sum_offsets = 0.0
-
-            for tau in range(-75, 76):
-                if tau == 0:
-                    continue
-
-                neighbor_idx = i + tau
-                if 0 <= neighbor_idx < spectrum_length:
-                    sum_offsets += spectrum[neighbor_idx]
-
+        
+        # Initialize sum for i=0
+        sum_offsets = 0.0
+        for tau in range(-75, 76):
+            if tau == 0:
+                continue
+            neighbor_idx = tau
+            if 0 <= neighbor_idx < spectrum_length:
+                sum_offsets += spectrum[neighbor_idx]
+        
+        mean_offset = sum_offsets / 150
+        corrected_spectrum[0] = spectrum[0] - mean_offset
+        
+        # For each subsequent i, update the sliding window
+        for i in range(1, spectrum_length):
+            # When moving from i-1 to i, the window shifts:
+            # Old window: [(i-1)-75, (i-1)+75] excluding (i-1)
+            # New window: [i-75, i+75] excluding i
+            
+            # Remove the leftmost element of the old window: (i-1)-75 = i-76
+            remove_idx = i - 76
+            if 0 <= remove_idx < spectrum_length:
+                sum_offsets -= spectrum[remove_idx]
+                
+            # Add the rightmost element of the new window: i+75
+            add_idx = i + 75
+            if 0 <= add_idx < spectrum_length:
+                sum_offsets += spectrum[add_idx]
+                
+            # Remove the old center (i-1) and add it back since we excluded it
+            if 0 <= i - 1 < spectrum_length:
+                sum_offsets += spectrum[i - 1]
+                
+            # Remove the new center (i) since we exclude tau=0
+            if 0 <= i < spectrum_length:
+                sum_offsets -= spectrum[i]
+            
             mean_offset = sum_offsets / 150
             corrected_spectrum[i] = spectrum[i] - mean_offset
-
-
+        
         return corrected_spectrum
 
 
