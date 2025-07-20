@@ -3,7 +3,7 @@ import math
 from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 
-class FastXCorr:
+class FastXcorr:
     """
     Fast cross-correlation score implementation based on the SEQUEST algorithm.
     
@@ -13,7 +13,7 @@ class FastXCorr:
     
     def __init__(self, bin_width: float = 1.0005079, bin_offset: float = 0.4):
         """
-        Initialize the FastXCorr scorer.
+        Initialize the FastXcorr scorer.
         
         Args:
             bin_width: Width of mass bins in daltons
@@ -153,7 +153,7 @@ class FastXCorr:
         return corrected_spectrum
 
 
-    def calculate_theoretical_spectrum(self, peptide_sequence: str, 
+    def calculate_fragment_ion_bins(self, peptide_sequence: str, 
                                      charge: int = 2, 
                                      max_mass: float = 4000.0) -> np.ndarray:
         """
@@ -165,8 +165,11 @@ class FastXCorr:
             max_mass: Maximum mass to consider
             
         Returns:
-            Theoretical spectrum array
+            fragment_ion_bins_uniq: the set of fragment bins
         """
+
+        fragment_ion_bins = []
+
         max_bin = int(max_mass / self.bin_width) + 1
         theoretical_spectrum = np.zeros(max_bin)
         
@@ -182,7 +185,7 @@ class FastXCorr:
                 b_ion_mass = cumulative_mass + self.proton_mass
                 bin_idx = int((b_ion_mass / self.bin_width)  + 1 - self.bin_offset)
                 if 0 <= bin_idx < max_bin:
-                    theoretical_spectrum[bin_idx] = 50.0  # Standard intensity
+                    fragment_ion_bins.append(bin_idx)
         
         # Calculate y-ions (C-terminal fragments)
         # y-ions are formed by cleavage at the peptide bond, keeping the C-terminal portion
@@ -196,29 +199,33 @@ class FastXCorr:
                 y_ion_mass = cumulative_mass
                 bin_idx = int((y_ion_mass / self.bin_width)  + 1 - self.bin_offset)
                 if 0 <= bin_idx < max_bin:
-                    theoretical_spectrum[bin_idx] = 50.0  # Standard intensity
+                    fragment_ion_bins.append(bin_idx)
+    
+        fragment_ion_bins_uniq = set(fragment_ion_bins)
         
-        return theoretical_spectrum
+        return fragment_ion_bins_uniq
     
     def calculate_xcorr(self, experimental_spectrum: np.ndarray, 
-                       theoretical_spectrum: np.ndarray) -> float:
+                       fragment_bins: set) -> float:
         """
         Calculate the fast xcorr score using dot product.
         
         Args:
-            experimental_spectrum: Preprocessed experimental spectrum
-            theoretical_spectrum: Theoretical spectrum
+            experimental_spectrum: Fast xcorr preprocessed experimental spectrum
+            fragment_bins:  Set of fragment ion bin locations
             
         Returns:
-            Cross-correlation score
+            Cross-correlation score which is a simple sum across the
+            fast xcorr processed spectrum.
         """
-        # Ensure both spectra have the same length
-        min_len = min(len(experimental_spectrum), len(theoretical_spectrum))
-        exp_spec = experimental_spectrum[:min_len]
-        theo_spec = theoretical_spectrum[:min_len]
-        
-        # Calculate xcorr as dot product
-        xcorr = np.dot(theo_spec, exp_spec) / 10000
+        xcorr = 0.0
+        arraysize = experimental_spectrum.size
+
+        for bin_idx in fragment_bins:
+            if bin_idx < arraysize :
+                xcorr += experimental_spectrum[bin_idx]
+
+        xcorr = xcorr * 0.005  # this handles theoretical spectrum intensities of 50 and dividing raw xcorr by 1e4
         
         return xcorr
     
@@ -243,21 +250,24 @@ class FastXCorr:
         exp_spectrum = self.preprocess_spectrum(spectrum, charge, max_mass, use_flank_peaks)
         exp_spectrum_corrected = self.apply_xcorr_preprocessing(exp_spectrum)
 
+
+        """
         # This will print bin index, intensity, and corrected value, skipping bins where both are zero.
-        print("\nBin\tIntensity\tfastxcorr")
+        print("\nBin\tIntensity\tprocessed intensity")
         for idx, (intensity, corrected) in enumerate(zip(exp_spectrum, exp_spectrum_corrected)):
             if intensity != 0.0 or corrected != 0.0:
                 print(f"{idx}\t{intensity:.6f}\t{corrected:.6f}")
+        """
 
         
         # Score each peptide
         scores = []
         for peptide in peptide_sequences:
             # Calculate theoretical spectrum
-            theo_spectrum = self.calculate_theoretical_spectrum(peptide, charge, max_mass)
+            fragment_bins = self.calculate_fragment_ion_bins(peptide, charge, max_mass)
             
             # Calculate xcorr score
-            xcorr_score = self.calculate_xcorr(exp_spectrum_corrected, theo_spectrum)
+            xcorr_score = self.calculate_xcorr(exp_spectrum_corrected, fragment_bins)
             
             scores.append((peptide, xcorr_score))
         
@@ -269,8 +279,8 @@ class FastXCorr:
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Create FastXCorr instance
-    xcorr_scorer = FastXCorr()
+    # Create FastXcorr instance
+    xcorr_scorer = FastXcorr()
     
     # Example experimental spectrum (mass, intensity pairs)
     experimental_spectrum = [
@@ -290,11 +300,9 @@ if __name__ == "__main__":
     # Example peptide sequences to score
     peptide_sequences = [
         "DIGSETK",           # Target peptide
-        "DGISETK",
-        "SGVALADESTLAFNLK",
-        "ALADESTLAFNLK",
-        "SGVALADESTLAFK",
-        "KVLADESLFANK",
+        "DGISETK",           # Similar wrong peptide
+        "STLAFNLK",
+        "ASLQFTMK",
         "PEPTIDER"
     ]
     
@@ -304,10 +312,13 @@ if __name__ == "__main__":
     # First, let's see what the preprocessed spectrum looks like
     exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, max_mass=4000.0)
     
+    """
     print(f"\nPreprocessed experimental spectrum (exp_spectrum):")
     print(f"Length: {len(exp_spectrum)}")
     print(f"Non-zero values: {np.count_nonzero(exp_spectrum)}")
+    """
     
+    """
     # Print non-zero values with their indices (mass bins)
     print("\nNon-zero intensity values:")
     print("Bin Index\tIntensity")
@@ -315,6 +326,7 @@ if __name__ == "__main__":
     for i, intensity in enumerate(exp_spectrum):
         if intensity > 0:
             print(f"{i}\t\t{intensity:.4f}")
+    """
     
     scores = xcorr_scorer.score_peptides(experimental_spectrum, peptide_sequences, charge=2)
     
@@ -330,7 +342,7 @@ if __name__ == "__main__":
         exp_spectrum_corrected = xcorr_scorer.apply_xcorr_preprocessing(exp_spectrum)
         
         # Calculate theoretical spectrum for DIGSETK
-        theo_spectrum = xcorr_scorer.calculate_theoretical_spectrum(target_peptide, charge=2, max_mass=4000.0)
+        fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, charge=2, max_mass=4000.0)
         
         print(f"\nAnalyzing peptide: {target_peptide}")
         print(f"Amino acid sequence: D-I-G-S-E-T-K")
@@ -365,22 +377,14 @@ if __name__ == "__main__":
                     xcorr_value = exp_spectrum_corrected[bin_idx]
                 print(f"mass {y_ion_mass:.6f}, binned ion {bin_idx}, fast xcorr at {bin_idx}: {xcorr_value:.6f}")
         
-        # Show theoretical spectrum peaks
-        print(f"\nTheoretical spectrum peaks for {target_peptide}:")
-        for i, intensity in enumerate(theo_spectrum):
-            if intensity > 0:
-                mass = i * xcorr_scorer.bin_width + xcorr_scorer.bin_offset
-                print(f"Bin {i}: mass {mass:.6f}, theoretical intensity {intensity:.1f}")
     
     print("\n" + "="*60)
     
-    print("\nResults (sorted by XCorr score):")
-    print("Peptide Sequence\t\tXCorr Score")
+    print("\nResults (sorted by xcorr score):")
     print("-" * 40)
     for peptide, score in scores:
         print(f"{peptide:<20}\t{score:.4f}")
     
     if scores:
         top_peptide, top_score = scores[0]
-        print(f"\nTop hit: {top_peptide}")
-        print(f"XCorr Score: {top_score:.4f}")
+        print(f"\nTop hit: {top_peptide}, xcorr {top_score:.4f}")
