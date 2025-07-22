@@ -8,3 +8,6 @@ anyone.
 
 Lines 14, 15, and 16 is where you set the fragment paramters such as fragment_bin_width,
 fragment_bin_offset, and use_flanking_peaks (aka theoretical_fragment_ions in Comet).
+
+The "test" directory contains the same spectra data and peptides for a Comet search as
+are encoded in xcorr_py.
