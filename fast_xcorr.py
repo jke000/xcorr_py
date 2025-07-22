@@ -13,7 +13,7 @@ class FastXcorr:
     
     def __init__(self, bin_width: float = 0.02,
                        bin_offset: float = 0.0,
-                       use_flanking_peaks: int = 1):
+                       use_flanking_peaks: bool = True):
         """
         Initialize the FastXcorr scorer.
         
@@ -102,7 +102,7 @@ class FastXcorr:
 
         # check if flanking peaks need to be incorporated
         final_binned_spectrum = np.zeros(max_bin)
-        if self.use_flanking_peaks == 0:
+        if self.use_flanking_peaks == False:
            final_binned_spectrum = binned_spectrum
         else:
             for i in range(len(binned_spectrum)):
