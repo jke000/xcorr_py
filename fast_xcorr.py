@@ -35,23 +35,17 @@ class FastXcorr:
         self.proton_mass = 1.00727646688
         
     def preprocess_spectrum(self, spectrum: List[Tuple[float, float]], 
-                          charge: int = 2, max_mass: float = 4000.0, print_debug: bool = False) -> np.ndarray:
+                          charge: int = 2, print_debug: bool = False) -> np.ndarray:
         """
         Preprocess experimental spectrum following SEQUEST protocol.
         
         Args:
             spectrum: List of (mass, intensity) tuples
             charge: Precursor charge state
-            max_mass: Maximum mass to consider
             flank_peaks: 0=no, 1=use flanking peaks
             
         Returns:
             Preprocessed spectrum array ready for xcorr calculation
-        """
-
-        """
-        max_mass is maximum mass from input spectrum
-        max_mass = max(spec_array[:, 0], initial=0.0)
         """
 
         # Convert to numpy array and filter by mass range
@@ -192,13 +186,13 @@ class FastXcorr:
 
     def calculate_fragment_ion_bins(self, peptide_sequence: str,
                                      charge: int = 2,
-                                     max_mass: float = 4000.0) -> np.ndarray:
+                                     max_mass: float = 5000.0) -> np.ndarray:
         """
         Calculate theoretical spectrum for a peptide sequence.
         Args:
             peptide_sequence: Peptide sequence string
             charge: Maximum fragment charge state to consider
-            max_mass: Maximum mass to consider
+            max_mass: Maximum peptide mass to consider for max fragment bin
         Returns:
             fragment_ion_bins_uniq: the set of fragment bins
         """
@@ -261,13 +255,15 @@ class FastXcorr:
                 xcorr += experimental_spectrum[bin_idx]
 
         xcorr = xcorr * 0.005  # this handles theoretical spectrum intensities of 50 and dividing raw xcorr by 1e4
+
+        xcorr = round(xcorr, 3)   # match Comet and round xcorr to 3 decimal points
         
         return xcorr
     
     def score_peptides(self, spectrum: List[Tuple[float, float]], 
                       peptide_sequences: List[str], 
                       charge: int = 2, 
-                      max_mass: float = 4000.0) -> List[Tuple[str, float]]:
+                      max_mass: float = 5000.0) -> List[Tuple[str, float]]:
         """
         Score multiple peptide sequences against an experimental spectrum.
         
@@ -281,7 +277,7 @@ class FastXcorr:
             List of (peptide_sequence, xcorr_score) tuples sorted by score
         """
         # Preprocess experimental spectrum
-        exp_spectrum = self.preprocess_spectrum(spectrum, charge, max_mass, print_debug=False)
+        exp_spectrum = self.preprocess_spectrum(spectrum, charge, print_debug=False)
         exp_spectrum_corrected = self.apply_xcorr_preprocessing(exp_spectrum, print_debug=False)
 
 
@@ -343,10 +339,10 @@ if __name__ == "__main__":
     print("Scoring peptides against experimental spectrum...")
     
     # First, let's see what the preprocessed spectrum looks like
-    exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, max_mass=4000.0, print_debug=False)
+    exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, print_debug=False)
     
     """
-    print(f"\nPreprocessed experimental spectrum (exp_spectrum):")
+    print("\nPreprocessed experimental spectrum (exp_spectrum):")
     print(f"Length: {len(exp_spectrum)}")
     print(f"Non-zero values: {np.count_nonzero(exp_spectrum)}")
     """
@@ -374,14 +370,14 @@ if __name__ == "__main__":
     fragment_charge = 1
     if target_peptide in peptide_sequences:
         # Get the corrected experimental spectrum
-        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, fragment_charge, max_mass=4000.0, print_debug=False)
+        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, fragment_charge, print_debug=False)
         exp_spectrum_corrected = xcorr_scorer.apply_xcorr_preprocessing(exp_spectrum, print_debug=False)
         
         # Calculate theoretical spectrum for YQSHTK
-        fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, fragment_charge, max_mass=4000.0)
+        fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, fragment_charge, max_mass=5000.0)
         
         print(f"\nAnalyzing peptide: {target_peptide}")
-        print(f"Amino acid sequence: Y-Q-S-H-T-K")
+        print("Amino acid sequence: Y-Q-S-H-T-K")
         
         # Calculate and display b-ions
         print("\nB-ions (N-terminal fragments):")
@@ -421,8 +417,8 @@ if __name__ == "__main__":
     print("\nResults (sorted by xcorr score):")
     print("-" * 40)
     for peptide, score in scores:
-        print(f"{peptide:<20}\t{score:.3f}")
+        print(f"{peptide:<20}\t{score:.4f}")
     
     if scores:
         top_peptide, top_score = scores[0]
-        print(f"\nTop hit: {top_peptide}, xcorr {top_score:.3f}")
+        print(f"\nTop hit: {top_peptide}, xcorr {top_score:.4f}")
