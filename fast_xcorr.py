@@ -11,7 +11,9 @@ class FastXcorr:
     that avoids FFTs and uses direct dot products for efficient scoring.
     """
     
-    def __init__(self, bin_width: float = 1.0005079, bin_offset: float = 0.4):
+    def __init__(self, bin_width: float = 0.02,
+                       bin_offset: float = 0.0,
+                       use_flanking_peaks: int = 1):
         """
         Initialize the FastXcorr scorer.
         
@@ -21,19 +23,19 @@ class FastXcorr:
         """
         self.bin_width = bin_width
         self.bin_offset = bin_offset
+        self.use_flanking_peaks = use_flanking_peaks 
         self.amino_acid_masses = {
-            'A':  71.03711, 'R': 156.10111, 'N': 114.04293, 'D': 115.02694,
-            'C': 103.00919, 'E': 129.04259, 'Q': 128.05858, 'G':  57.02146,
-            'H': 137.05891, 'I': 113.08406, 'L': 113.08406, 'K': 128.09496,
-            'M': 131.04049, 'F': 147.06841, 'P':  97.05276, 'S':  87.03203,
-            'T': 101.04768, 'W': 186.07931, 'Y': 163.06333, 'V':  99.06841
+            'A':  71.037113805, 'R': 156.101111050, 'N': 114.042927470, 'D': 115.026943065,
+            'C': 103.009184505, 'E': 129.042593135, 'Q': 128.058577540, 'G':  57.021463735,
+            'H': 137.058911875, 'I': 113.084064015, 'L': 113.084064015, 'K': 128.094963050,
+            'M': 131.040484645, 'F': 147.068413945, 'P':  97.052763875, 'S':  87.032028435,
+            'T': 101.047678505, 'W': 186.079312980, 'Y': 163.063328575, 'V':  99.068413945 
         }
-        self.water_mass = 18.01056
-        self.proton_mass = 1.007276
+        self.water_mass = 18.0105647
+        self.proton_mass = 1.00727646688
         
     def preprocess_spectrum(self, spectrum: List[Tuple[float, float]], 
-                          charge: int = 2, max_mass: float = 4000.0,
-                          flank_peaks: int = 1) -> np.ndarray:
+                          charge: int = 2, max_mass: float = 4000.0, print_debug: bool = False) -> np.ndarray:
         """
         Preprocess experimental spectrum following SEQUEST protocol.
         
@@ -60,47 +62,76 @@ class FastXcorr:
             
         valid_peaks = spec_array[spec_array[:, 0] <= max_mass]
         
-        # Create binned spectrum
-        max_bin = int((max_mass / self.bin_width) + 1 - self.bin_offset) + 2
+        # Create binned spectrum ; set max_bin to +75 beyond last mass for fastxcorr offsets
+        max_bin = int((max_mass / self.bin_width) + 1 - self.bin_offset) + 2 + 75
         binned_spectrum = np.zeros(max_bin)
         
         for mass, intensity in valid_peaks:
             bin_idx = int((mass / self.bin_width) + 1 - self.bin_offset)
             sqrt_intensity = math.sqrt(max(0, intensity))
-            if flank_peaks == 0:
-                if 0 <= bin_idx < max_bin:
-                    binned_spectrum[bin_idx] = max(binned_spectrum[bin_idx], sqrt_intensity)
-            else:
-                for spread in [-1, 0, 1]:
-                    idx = bin_idx + spread
-                    if 0 <= idx < max_bin:
-                        if spread == 0:
-                            binned_spectrum[idx] = max(binned_spectrum[idx], sqrt_intensity)
-                        else:
-                            binned_spectrum[idx] = max(binned_spectrum[idx], 0.5 * sqrt_intensity)
+            if 0 <= bin_idx < max_bin:
+                binned_spectrum[bin_idx] = max(binned_spectrum[bin_idx], sqrt_intensity)
+
+        if print_debug:
+            print("experimental spectrum (binned_spectrum) before normalization...")
+            for index, value in enumerate(binned_spectrum):
+                if value != 0:
+                    print(f"{index}: {value:.3f}")
 
         # Normalize intensities in windows (simplified version)
-        # SEQUEST normalizes max intensity to 50 in each of the 10 windows
+        # Set max intensity to 50 in each of the 10 windows
+        # To match Comet exactly, apply a mininum cutoff of 0.05 of the maximum intensity
         num_windows = 10
-        window_size = (int)(max_bin / num_windows) + 1;
+        highest_ion =  int((max_mass / self.bin_width) + 1 - self.bin_offset)
+        window_size = (int)(highest_ion / num_windows) + 1;
+
+        """
+        print(f"OK window_size {window_size}")
+        print(f"OK highest_ion {highest_ion}, max_mass {max_mass}")
+        print(f"OK len(binned_spectrum) {len(binned_spectrum)}")
+        """
 
         if window_size > 0:
-            for i in range(0, len(binned_spectrum), window_size):
+            for i in range(0, highest_ion, window_size):
                 end_idx = min(i + window_size, len(binned_spectrum))
                 window = binned_spectrum[i:end_idx]
                 if np.max(window) > 0:
-                    binned_spectrum[i:end_idx] = window / np.max(window) * 50.0
-        
-        #print("binned_spectrum...")
-        #for index, value in enumerate(binned_spectrum):
-        #    if value != 0:
-        #        print(f"{index}: {value}")
+                    # Calculate cutoff as 5% of this window's maximum
+                    min_intensity_cutoff = 0.05 * np.max(window)
+                    # Create a mask for values above the cutoff
+                    mask = window > min_intensity_cutoff
+                    # Only normalize values above the cutoff
+                    normalized_window = window.copy()
+                    if np.any(mask):
+                        normalized_window[mask] = window[mask] / np.max(window) * 50.0
+                    binned_spectrum[i:end_idx] = normalized_window
+
+        # check if flanking peaks need to be incorporated
+        final_binned_spectrum = np.zeros(max_bin)
+        if self.use_flanking_peaks == 0:
+           final_binned_spectrum = binned_spectrum
+        else:
+            for i in range(len(binned_spectrum)):
+                final_binned_spectrum[i] = binned_spectrum[i]
+    
+                # Add 0.5 * value from i-1 (if it exists)
+                if i > 0:
+                    final_binned_spectrum[i] += 0.5 * binned_spectrum[i-1]
+    
+                # Add 0.5 * value from i+1 (if it exists)
+                if i < len(binned_spectrum) - 1:
+                    final_binned_spectrum[i] += 0.5 * binned_spectrum[i+1]
+
+        if print_debug:
+            print("experimental spectrum (binned_spectrum) after normalization...")
+            for index, value in enumerate(final_binned_spectrum):
+                if value != 0:
+                    print(f"{index}: {value:.3f}")
+
+        return final_binned_spectrum
 
 
-        return binned_spectrum
-
-
-    def apply_xcorr_preprocessing(self, spectrum: np.ndarray) -> np.ndarray:
+    def apply_xcorr_preprocessing(self, spectrum: np.ndarray, print_debug: bool = False) -> np.ndarray:
         """
         Apply the fast xcorr preprocessing as described in equation 6 of the paper.
         Args:
@@ -149,6 +180,12 @@ class FastXcorr:
             
             mean_offset = sum_offsets / 150
             corrected_spectrum[i] = spectrum[i] - mean_offset
+
+        if print_debug:
+            print("experimental spectrum after fast xcorr processing...")
+            for index, value in enumerate(corrected_spectrum):
+                if value != 0:
+                    print(f"{index}: {value:.6f}")
         
         return corrected_spectrum
 
@@ -244,11 +281,11 @@ class FastXcorr:
             List of (peptide_sequence, xcorr_score) tuples sorted by score
         """
         # Preprocess experimental spectrum
-        use_flank_peaks = 1
-        exp_spectrum = self.preprocess_spectrum(spectrum, charge, max_mass, use_flank_peaks)
-        exp_spectrum_corrected = self.apply_xcorr_preprocessing(exp_spectrum)
+        exp_spectrum = self.preprocess_spectrum(spectrum, charge, max_mass, print_debug=False)
+        exp_spectrum_corrected = self.apply_xcorr_preprocessing(exp_spectrum, print_debug=False)
 
 
+          
         """
         # This will print bin index, intensity, and corrected value, skipping bins where both are zero.
         print("\nBin\tIntensity\tprocessed intensity")
@@ -283,33 +320,30 @@ if __name__ == "__main__":
     
     # Example experimental spectrum (mass, intensity pairs)
     experimental_spectrum = [
-       (116.034220, 100),
-       (147.112804, 100),
-       (229.118284, 100),
-       (248.160483, 100),
-       (286.139747, 100),
-       (373.171776, 100),
-       (377.203076, 100),
-       (464.235104, 100),
-       (502.214369, 100),
-       (521.256568, 100),
-       (603.262047, 100),
-       (634.340632, 100),
+       (147.1128,  10.684),
+       (164.0706,   8.172),
+       (248.1605,  26.432),
+       (292.1292,  23.903),
+       (379.1612,  15.469),
+       (385.2194,  95.589),
+       (386.3205,  95.589),
+       (472.2514, 416.629),
+       (516.2201,  19.546),
+       (600.3100, 293.581),
+       (617.2678,  17.995)
     ]
     # Example peptide sequences to score
     peptide_sequences = [
-        "DIGSETK",           # Target peptide
-        "DGISETK",           # Similar wrong peptide
-        "STLAFNLK",
-        "ASLQFTMK",
-        "PEPTIDER"
+        "YQSHTK",           # Target peptide
+        "YSQHTK",           # Similar wrong peptide
+        "YHQSTK" 
     ]
     
     # Score peptides
     print("Scoring peptides against experimental spectrum...")
     
     # First, let's see what the preprocessed spectrum looks like
-    exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, max_mass=4000.0)
+    exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, charge=2, max_mass=4000.0, print_debug=False)
     
     """
     print(f"\nPreprocessed experimental spectrum (exp_spectrum):")
@@ -329,23 +363,25 @@ if __name__ == "__main__":
     
     scores = xcorr_scorer.score_peptides(experimental_spectrum, peptide_sequences, charge=2)
     
-    # Debug output for DIGSETK peptide to verify b-ions and y-ions
+    # Debug output for YQSHTK peptide to verify b-ions and y-ions
     print("\n" + "="*60)
-    print("DEBUG: Detailed analysis for DIGSETK peptide")
+    print("DEBUG: Detailed analysis for YQSHTK peptide")
     print("="*60)
     
-    target_peptide = "DIGSETK"
+    dSum = 0
+
+    target_peptide = "YQSHTK"
     fragment_charge = 1
     if target_peptide in peptide_sequences:
         # Get the corrected experimental spectrum
-        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, fragment_charge, max_mass=4000.0)
-        exp_spectrum_corrected = xcorr_scorer.apply_xcorr_preprocessing(exp_spectrum)
+        exp_spectrum = xcorr_scorer.preprocess_spectrum(experimental_spectrum, fragment_charge, max_mass=4000.0, print_debug=False)
+        exp_spectrum_corrected = xcorr_scorer.apply_xcorr_preprocessing(exp_spectrum, print_debug=False)
         
-        # Calculate theoretical spectrum for DIGSETK
+        # Calculate theoretical spectrum for YQSHTK
         fragment_bins = xcorr_scorer.calculate_fragment_ion_bins(target_peptide, fragment_charge, max_mass=4000.0)
         
         print(f"\nAnalyzing peptide: {target_peptide}")
-        print(f"Amino acid sequence: D-I-G-S-E-T-K")
+        print(f"Amino acid sequence: Y-Q-S-H-T-K")
         
         # Calculate and display b-ions
         print("\nB-ions (N-terminal fragments):")
@@ -360,7 +396,8 @@ if __name__ == "__main__":
                 xcorr_value = 0
                 if 0 <= bin_idx < len(exp_spectrum_corrected):
                     xcorr_value = exp_spectrum_corrected[bin_idx]
-                print(f"mass {b_ion_mass:.6f}, binned ion {bin_idx}, fast xcorr at {bin_idx}: {xcorr_value:.6f}")
+                dSum += xcorr_value
+                print(f"mass {b_ion_mass:.6f}, binned ion index {bin_idx}, fast xcorr at {bin_idx}: {xcorr_value:.4f}, xcorr_sum {dSum:.4f}")
         
         # Calculate and display y-ions
         print("\nY-ions (C-terminal fragments):")
@@ -375,7 +412,8 @@ if __name__ == "__main__":
                 xcorr_value = 0
                 if 0 <= bin_idx < len(exp_spectrum_corrected):
                     xcorr_value = exp_spectrum_corrected[bin_idx]
-                print(f"mass {y_ion_mass:.6f}, binned ion {bin_idx}, fast xcorr at {bin_idx}: {xcorr_value:.6f}")
+                dSum += xcorr_value
+                print(f"mass {y_ion_mass:.6f}, binned ion index {bin_idx}, fast xcorr at {bin_idx}: {xcorr_value:.4f}, xcorr_sum {dSum:.4f}")
         
     
     print("\n" + "="*60)
@@ -383,8 +421,8 @@ if __name__ == "__main__":
     print("\nResults (sorted by xcorr score):")
     print("-" * 40)
     for peptide, score in scores:
-        print(f"{peptide:<20}\t{score:.4f}")
+        print(f"{peptide:<20}\t{score:.3f}")
     
     if scores:
         top_peptide, top_score = scores[0]
-        print(f"\nTop hit: {top_peptide}, xcorr {top_score:.4f}")
+        print(f"\nTop hit: {top_peptide}, xcorr {top_score:.3f}")
