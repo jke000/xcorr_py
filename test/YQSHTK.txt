@@ -1,0 +1,5 @@
+CometVersion 2025.01 rev. 1 (4181df6)	YQSHTK	07/22/2025, 02:23:09 PM	YQSHTK.fasta
+scan	num	charge	exp_neutral_mass	calc_neutral_mass	e-value	xcorr	delta_cn	sp_score	ions_matched	ions_total	plain_peptide	modified_peptide	prev_aa	next_aa	protein	protein_count	modifications	retention_time_sec	sp_rank
+1	1	1	762.366024	762.366053	7.57E-07	2.1010	0.2304	596.0	10	10	YQSHTK	-.YQSHTK.-	-	-	peptide1	1	-	0.0	1
+1	2	1	762.366024	762.366053	2.33E-04	1.6170	0.2134	258.0	8	10	YSQHTK	-.YSQHTK.-	-	-	peptide2	1	-	0.0	2
+1	3	1	762.366024	762.366053	1.38E-02	1.2720	0.0000	125.0	6	10	YHQSTK	-.YHQSTK.-	-	-	peptide3	1	-	0.0	3
